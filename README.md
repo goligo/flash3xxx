@@ -1,4 +1,4 @@
-= Scripts for flashing Enterasys/Extreme Networks 3xxx devices with OpenWrt =
+# Scripts for flashing Enterasys/Extreme Networks 3xxx devices with OpenWrt
 
 These scripts do automate the tasks to flash 3xxx access points. They are useful in case a lot of devices need to be flashed to reduce manual work. 
 
