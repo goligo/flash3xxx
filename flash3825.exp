@@ -1,0 +1,133 @@
+#!/usr/bin/expect
+
+# Please adapt these variables to match your local environment
+set device "/dev/ttyUSB0"
+set tftpd_root "/srv/tftp"
+set initramfs_url "https://downloads.openwrt.org/releases/22.03.3/targets/mpc85xx/p1020/openwrt-22.03.3-mpc85xx-p1020-extreme-networks_ws-ap3825i-initramfs-kernel.bin"
+set sysupgrade_url "https://downloads.openwrt.org/releases/22.03.3/targets/mpc85xx/p1020/openwrt-22.03.3-mpc85xx-p1020-extreme-networks_ws-ap3825i-squashfs-sysupgrade.bin"
+
+# Don´t change these variables, unless you know what you are doing
+set baudrate 115200
+set initramfs_file "initramfs_3825.bin"
+set sysupgrade_file "sysupgrade_3825.bin"
+
+# Fetch initramfs and sysyupgrade images
+if { ![file exists $initramfs_file] } {
+  spawn wget $initramfs_url -O $initramfs_file
+  wait
+}
+if { ![file exists $sysupgrade_file] } {
+  spawn wget $sysupgrade_url -O $sysupgrade_file
+  wait
+}
+
+# Copy initramfs file to tftp server
+file copy -force $initramfs_file $tftpd_root/
+
+# Start cu serial communication with the AP
+spawn cu -l $device -s $baudrate
+
+send_user "\nReady to start the flash process. Please press enter, then power on/plug in the device.\n"
+expect_user "\r"
+send_user "\n============================================================ Waiting to connect...\n\n"
+
+expect "Hit 'd' for diagnostics, or any other key to stop autoboot:"
+send "\r"
+
+sleep 1
+send_user "\n============================================================ Logging into U-Boot...\n\n"
+
+expect "login:"
+send "admin\r"
+expect "password:"
+send "new2day\r"
+expect ">"
+
+sleep 1
+send_user "\n============================================================ Applying U-Boot configuration...\n\n"
+
+send "setenv boot_openwrt \"cp.b 0xEC000000 0x2000000 0x2000000; interrupts off; bootm start 0x2000000; bootm loados; fdt resize; fdt boardsetup; fdt chosen; bootm prep; bootm go;\"\r"
+expect ">"
+send "setenv bootcmd \"run boot_openwrt\"\r"
+expect ">"
+send "saveenv\r"
+expect ">"
+
+sleep 1
+send_user "\n============================================================ Booting from TFTP server...\n\n"
+
+# Boot from TFTP
+send "setenv ipaddr 192.168.200.1;\r"
+expect ">"
+send "setenv serverip 192.168.200.200;\r"
+expect ">"
+send "tftpboot 0x2000000 $initramfs_file;\r"
+expect ">"
+send "interrupts off;\r"
+expect ">"
+send "bootm start 0x2000000;\r"
+expect ">"
+send "bootm loados;\r"
+expect ">"
+send "fdt resize;\r"
+expect ">"
+send "fdt boardsetup;\r"
+expect ">"
+send "fdt chosen;\r"
+expect ">"
+send "bootm prep;\r"
+expect ">"
+send "bootm go;\r"
+expect ">"
+
+set timeout 60
+expect "Serial: 8250/16550 driver"
+close
+wait
+spawn cu -l $device -s $baudrate
+set timeout 60
+expect "Please press Enter to activate this console."
+
+send "\r"
+expect "root@(none):/#"
+close
+wait
+
+sleep 1
+send_user "\n============================================================ Waiting for network to come up...\n\n"
+
+spawn ping 192.168.1.1
+expect "64 bytes from 192.168.1.1"
+close
+wait
+
+send_user "\n============================================================ Copying sysupgrade image...\n\n"
+
+spawn scp -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no $sysupgrade_file root@192.168.1.1:/tmp
+wait
+
+sleep 1
+send_user "\n============================================================ Starting sysupgrade process...\n\n"
+
+spawn cu -l $device -s $baudrate
+send "\r"
+expect "root@OpenWrt:/#"
+send "sysupgrade /tmp/$sysupgrade_file\r"
+set timeout 300
+expect "Rebooting system..."
+
+sleep 1
+send_user "\n============================================================ Rebooting system...\n\n"
+
+set timeout 60
+expect "Please press Enter to activate this console."
+send "\r"
+expect "root@(none):/#"
+
+sleep 1
+send_user "\nFlashing the device has been completed successfully.\n"
+
+# Close the cu session
+close
+wait
+
